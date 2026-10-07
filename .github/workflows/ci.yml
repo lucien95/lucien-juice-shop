@@ -31,8 +31,7 @@ jobs: # Define the jobs that GitHub Actions will execute.
           key: yarn-node18-${{ runner.os }}-${{ hashFiles('yarn.lock', 'package.json') }} # Identify the cache by runtime label, runner OS, and dependency-file contents.
 
       - name: Install dependencies # Describe the dependency installation step.
-        run: yarn install # Install dependencies and execute lifecycle scripts, including the project's postinstall build.
-
+        run: yarn install --frozen-lockfile # Install the recorded dependency versions without changing the lockfile.
       - name: Run the configured test script # Describe the step that invokes the project's test command.
         run: yarn test # Execute scripts.test from package.json
 
