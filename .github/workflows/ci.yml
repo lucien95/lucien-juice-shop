@@ -1,10 +1,11 @@
 name: Juice Shop CI # Display this workflow name in GitHub's Actions tab.
 
-on: # Define the events that trigger this workflow.
-  pull_request: # Run when a pull request opens, reopens, or receives new commits.
-    branches: [main] # Only run for pull requests whose destination branch is main.
-  push: # Also run when commits are pushed, including through a merge.
-    branches: [main] # Only respond to pushes to main.
+on: # Define when this workflow runs.
+  pull_request: # Check proposed changes before merging.
+    branches: [main] # Run for pull requests targeting main.
+  push: # Respond to branch updates and release tags.
+    branches: [main] # Test and build commits pushed to main.
+    tags: ["v*.*.*"] # Also run when version tags such as v1.0.0 are pushed.
 
 permissions: # Set the permissions granted to this workflow's GitHub token.
   contents: read # Allow reading repository contents without granting write access.
@@ -49,18 +50,29 @@ jobs: # Define the jobs that GitHub Actions will execute.
       - name: Build image # Describe the step that packages the application.
         run: docker build -t "juice-shop:$GITHUB_SHA" . # Build using the current directory's Dockerfile and tag the local image with the event's commit SHA.
 
-      - name: Log in to Docker Hub # Authenticate before publishing the built image.
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Skip authentication on pull requests; allow it only for pushes to main.
-        uses: docker/login-action@v4 # Authenticate with Docker Hub and log out during the action's cleanup.
-        with: # Provide the credentials required by the login action.
-          username: ${{ vars.DOCKERHUB_USERNAME }} # Read your Docker Hub username from a GitHub Actions repository variable.
-          password: ${{ secrets.DOCKERHUB_TOKEN }} # Read your Docker Hub access token from a GitHub Actions repository secret.
+      - name: Validate release version # Check the release tag before using credentials.
+        if: github.event_name == 'push' && github.ref_type == 'tag' # Run only for tag pushes.
+        shell: bash # Use Bash for the version-format check.
+        run: | # Execute the following validation commands.
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then # Require a version such as v1.0.0.
+            echo "Expected a release tag such as v1.0.0" # Explain why validation failed.
+            exit 1 # Stop the job before login or publishing.
+          fi # Finish validating the tag.
 
-      - name: Publish image # Describe the step that uploads the image to your registry.
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Publish only after a push or merge to main.
-        env: # Define environment variables specifically for this publishing step.
-          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }} # Make the configured Docker Hub username available to the shell.
-        run: | # Execute the following lines as a multiline shell script.
-          IMAGE="$DOCKERHUB_USERNAME/lucien-juice-shop:$GITHUB_SHA" # Construct the destination image name with a commit-specific tag.
-          docker tag "juice-shop:$GITHUB_SHA" "$IMAGE" # Give the existing local image its Docker Hub destination tag.
-          docker push "$IMAGE" # Upload the tagged image to your lucien-juice-shop repository on Docker Hub.
+      - name: Log in to Docker Hub # Authenticate to your Docker Hub account.
+        if: github.event_name == 'push' && github.ref_type == 'tag' # Skip login on branch pushes and pull requests.
+        uses: docker/login-action@v4 # Use Docker's login action.
+        with: # Supply the existing credentials.
+          username: ${{ vars.DOCKERHUB_USERNAME }} # Read your Docker Hub username.
+          password: ${{ secrets.DOCKERHUB_TOKEN }} # Read your Docker Hub token securely.
+
+      - name: Publish release image # Upload the image with its release version.
+        if: github.event_name == 'push' && github.ref_type == 'tag' # Publish only for tag pushes.
+        env: # Define variables for this step.
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }} # Make the username available to the shell.
+        shell: bash # Use Bash to process the version string.
+        run: | # Execute the tagging and publishing commands.
+          VERSION="${GITHUB_REF_NAME#v}" # Remove the leading v, converting v1.0.0 to 1.0.0.
+          IMAGE="$DOCKERHUB_USERNAME/lucien-juice-shop:$VERSION" # Construct the Docker Hub image name.
+          docker tag "juice-shop:$GITHUB_SHA" "$IMAGE" # Add the release tag to the image built earlier.
+          docker push "$IMAGE" # Publish the versioned image.
